@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block title %}대시보드 - 연구평가 자동화 시스템{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <!-- 상단 통계 카드 -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-gray-500 text-sm font-medium">전체 프로젝트</h3>
+            <p class="mt-2 text-3xl font-bold text-gray-900" id="totalProjects">{{ total_projects }}</p>
+            <div class="mt-2 flex items-center text-sm text-gray-600">
+                <span id="projectTrend" class="text-green-500">↑ 12%</span>
+                <span class="ml-2">지난 달 대비</span>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-gray-500 text-sm font-medium">완료된 프로젝트</h3>
+            <p class="mt-2 text-3xl font-bold text-gray-900" id="completedProjects">{{ completed_projects }}</p>
+            <div class="mt-2 flex items-center text-sm text-gray-600">
+                <span class="text-sm">완료율: </span>
+                <span id="completionRate" class="ml-1 font-medium">{{ "%.1f"|format(completed_projects/total_projects*100 if total_projects > 0 else 0) }}%</span>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-gray-500 text-sm font-medium">평균 완료 시간</h3>
+            <p class="mt-2 text-3xl font-bold text-gray-900" id="avgCompletionTime">-</p>
+            <p class="mt-2 text-sm text-gray-600">일 소요</p>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-gray-500 text-sm font-medium">진행 중인 프로젝트</h3>
+            <p class="mt-2 text-3xl font-bold text-gray-900" id="activeProjects">{{ active_projects|length }}</p>
+            <div class="mt-2 flex items-center text-sm text-gray-600">
+                <span class="text-blue-500">●</span>
+                <span class="ml-1">실시간 업데이트</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 검색 및 필터 -->
+    <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex-1 min-w-[300px]">
+            <div class="relative">
+                <input type="text" 
+                       id="searchInput"
+                       placeholder="프로젝트 검색..."
+                       class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button class="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div class="flex gap-2">
+            <select id="statusFilter" class="rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">모든 상태</option>
+                <option value="active">진행 중</option>
+                <option value="completed">완료됨</option>
+            </select>
+            <select id="dateFilter" class="rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">전체 기간</option>
+                <option value="7">최근 7일</option>
+                <option value="30">최근 30일</option>
+                <option value="90">최근 90일</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 차트 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">월별 프로젝트 추이</h3>
+            <div class="h-[300px]" id="monthlyProjectsChart"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">프로젝트 상태 분포</h3>
+            <div class="h-[300px]" id="projectStatusChart"></div>
+        </div>
+    </div>
+
+    <!-- 프로젝트 목록 -->
+    <div class="bg-white rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h3 class="text-lg font-medium text-gray-900">프로젝트 목록</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">프로젝트</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상태</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">진행률</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">생성일</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">작업</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200" id="projectsList">
+                    {% for project in recent_projects %}
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <div>
+                                    <div class="text-sm font-medium text-gray-900">{{ project.title }}</div>
+                                    <div class="text-sm text-gray-500">ID: {{ project.id }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            {% set completed_steps = project.research_steps|selectattr('result', 'defined')|list|length %}
+                            {% set total_steps = project.research_steps|length %}
+                            {% if completed_steps == total_steps %}
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                                    완료됨
+                                </span>
+                            {% else %}
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                    진행 중
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                                {% set progress = (completed_steps / total_steps * 100) if total_steps > 0 else 0 %}
+                                <div class="bg-blue-600 h-2.5 rounded-full" style="width: {{ progress }}%"></div>
+                            </div>
+                            <span class="text-sm text-gray-600">{{ "%.1f"|format(progress) }}%</span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {{ project.created_at.strftime('%Y-%m-%d %H:%M') }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <a href="/project/{{ project.id }}" class="text-indigo-600 hover:text-indigo-900">상세보기</a>
+                        </td>
+                        # templates/dashboard.html (continued)
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="px-6 py-4 border-t border-gray-200">
+            <div class="flex items-center justify-between">
+                <div class="flex-1 flex justify-between sm:hidden">
+                    <button id="prevPageMobile" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        이전
+                    </button>
+                    <button id="nextPageMobile" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        다음
+                    </button>
+                </div>
+                <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                    <div>
+                        <p class="text-sm text-gray-700">
+                            총 <span id="totalItems" class="font-medium">0</span> 개 프로젝트 중
+                            <span id="startItem" class="font-medium">0</span> -
+                            <span id="endItem" class="font-medium">0</span> 표시
+                        </p>
+                    </div>
+                    <div>
+                        <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination" id="pagination">
+                            <!-- 페이지네이션은 JavaScript로 동적 생성됩니다 -->
+                        </nav>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 프로젝트 상세 모달 -->
+<div id="projectModal" class="fixed inset-0 bg-gray-500 bg-opacity-75 hidden" aria-hidden="true">
+    <div class="fixed inset-0 overflow-y-auto">
+        <div class="flex min-h-full items-center justify-center p-4">
+            <div class="bg-white rounded-lg max-w-3xl w-full">
+                <div class="flex justify-between items-center p-6 border-b">
+                    <h3 class="text-lg font-semibold" id="modalProjectTitle"></h3>
+                    <button class="modal-close">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="p-6">
+                    <div id="modalContent">
+                        <!-- 프로젝트 상세 정보가 동적으로 추가됩니다 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

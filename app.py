@@ -13,6 +13,8 @@ from PIL import Image
 import pytesseract
 import pdf2image
 from dotenv import load_dotenv
+from sqlalchemy import func, or_  # dashboard_stats와 search_projects에 필요한 import
+from flask import send_file  # 파일 다운로드를 위한 import
 
 # Load environment variables
 load_dotenv()
@@ -71,6 +73,7 @@ class ResearchStep(db.Model):
     output_format = db.Column(db.Text, nullable=False)
     result = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 추가된 필드
 
 class Reference(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -78,7 +81,7 @@ class Reference(db.Model):
     title = db.Column(db.String(200), nullable=False)
     content = db.Column(db.Text, nullable=False)
     url = db.Column(db.String(500), nullable=False)
-    metadata = db.Column(db.Text)
+    metavalue = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 # OpenAI API Integration
@@ -111,10 +114,10 @@ class OpenAIService:
 
             response = requests.post(
                 url,
-                headers=self.headers = {
+                headers= {
             "Authorization": f"Bearer ",
             "Content-Type": "application/json"
-        },
+                },
                 json=payload,
                 timeout=30
             )
@@ -131,7 +134,7 @@ class OpenAIService:
                             'title': details.get('title', '제목 없음'),
                             'content': details.get('content', ''),
                             'url': details.get('url', ''),
-                            'metadata': {
+                            'metavalue': {
                                 'authors': details.get('authors', []),
                                 'year': details.get('year', ''),
                                 'journal': details.get('journal', ''),
@@ -445,7 +448,7 @@ def create_project():
                     title=ref['title'],
                     content=ref['content'],
                     url=ref['url'],
-                    metadata=json.dumps(ref['metadata'])
+                    metavalue=json.dumps(ref['metavalue'])
                 )
                 db.session.add(reference)
 
@@ -472,7 +475,7 @@ def execute_research_step(project_id, step_number):
             ref_data = {
                 'title': ref.title,
                 'content': ref.content,
-                'metadata': json.loads(ref.metadata) if ref.metadata else {}
+                'metavalue': json.loads(ref.metavalue) if ref.metavalue else {}
             }
             reference_texts.append(json.dumps(ref_data, ensure_ascii=False))
 
@@ -545,6 +548,129 @@ def get_research_steps(project_id):
         
     except Exception as e:
         app.logger.error(f"연구 단계 조회 중 오류 발생: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+    
+# 기존 app.py 파일에 추가할 라우트
+
+@app.route('/dashboard')
+def dashboard():
+    """대시보드 메인 페이지"""
+    try:
+        # 전체 프로젝트 통계
+        total_projects = Project.query.count()
+        completed_projects = Project.query.filter(
+            Project.research_steps.any(ResearchStep.result != None)
+        ).distinct().count()
+        
+        # 최근 프로젝트
+        recent_projects = Project.query.order_by(Project.created_at.desc()).limit(5).all()
+        
+        # 진행 중인 프로젝트
+        active_projects = db.session.query(Project).join(ResearchStep).filter(
+            ResearchStep.result == None
+        ).distinct().all()
+
+        return render_template('dashboard.html',
+            total_projects=total_projects,
+            completed_projects=completed_projects,
+            recent_projects=recent_projects,
+            active_projects=active_projects
+        )
+    except Exception as e:
+        app.logger.error(f"대시보드 로딩 중 오류 발생: {str(e)}")
+        return render_template('error.html', error="대시보드를 불러오는 중 오류가 발생했습니다.")
+
+@app.route('/api/dashboard/stats')
+def dashboard_stats():
+    """대시보드 통계 API"""
+    try:
+        # 프로젝트 통계
+        total_projects = Project.query.count()
+        completed_projects = Project.query.filter(
+            Project.research_steps.any(ResearchStep.result != None)
+        ).distinct().count()
+        
+        # 월별 프로젝트 수
+        month_stats = db.session.query(
+            func.strftime('%Y-%m', Project.created_at).label('month'),
+            func.count(Project.id).label('count')
+        ).group_by('month').order_by('month').all()
+        
+        # 평균 완료 시간
+        avg_completion_time = db.session.query(
+            func.avg(
+                func.julianday(ResearchStep.updated_at) - 
+                func.julianday(Project.created_at)
+            )
+        ).join(Project).filter(ResearchStep.result != None).scalar()
+
+        return jsonify({
+            'success': True,
+            'stats': {
+                'total_projects': total_projects,
+                'completed_projects': completed_projects,
+                'completion_rate': (completed_projects / total_projects * 100) if total_projects > 0 else 0,
+                'monthly_projects': [{'month': m, 'count': c} for m, c in month_stats],
+                'avg_completion_days': round(avg_completion_time, 1) if avg_completion_time else 0
+            }
+        })
+    except Exception as e:
+        app.logger.error(f"대시보드 통계 조회 중 오류 발생: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/dashboard/projects/<int:project_id>/progress')
+def project_progress(project_id):
+    """프로젝트 진행 상황 API"""
+    try:
+        project = Project.query.get_or_404(project_id)
+        steps = ResearchStep.query.filter_by(project_id=project_id).all()
+        
+        total_steps = len(steps)
+        completed_steps = sum(1 for step in steps if step.result is not None)
+        
+        return jsonify({
+            'success': True,
+            'progress': {
+                'project_id': project_id,
+                'total_steps': total_steps,
+                'completed_steps': completed_steps,
+                'percentage': (completed_steps / total_steps * 100) if total_steps > 0 else 0
+            }
+        })
+    except Exception as e:
+        app.logger.error(f"프로젝트 진행 상황 조회 중 오류 발생: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/dashboard/search')
+def search_projects():
+    """프로젝트 검색 API"""
+    try:
+        query = request.args.get('q', '')
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 10, type=int)
+        
+        projects = Project.query.filter(
+            or_(
+                Project.title.ilike(f'%{query}%'),
+                Project.evaluation_plan.ilike(f'%{query}%')
+            )
+        ).paginate(page=page, per_page=per_page, error_out=False)
+        
+        return jsonify({
+            'success': True,
+            'projects': [{
+                'id': p.id,
+                'title': p.title,
+                'created_at': p.created_at.isoformat(),
+                'total_steps': len(p.research_steps),
+                'completed_steps': sum(1 for step in p.research_steps if step.result is not None)
+            } for p in projects.items],
+            'total': projects.total,
+            'pages': projects.pages,
+            'current_page': page
+        })
+    except Exception as e:
+        app.logger.error(f"프로젝트 검색 중 오류 발생: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
