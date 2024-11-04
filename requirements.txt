@@ -1,3 +1,4 @@
+# requirements.txt
 flask
 flask-sqlalchemy
 flask-migrate
@@ -12,9 +13,9 @@ selenium
 fake-useragent
 scholarly
 pandas
-numpy
+numpy>=1.26.0  # Python 3.12 호환 버전
 werkzeug
 gunicorn
 pytest
-python-logging-handler
+# python-logging-handler 제거 (Python 기본 logging 모듈 사용)
 webdriver-manager
